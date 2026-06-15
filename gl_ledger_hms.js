@@ -33,22 +33,36 @@ const BASE_URL = env.SMARTERP_URL;
 const USERNAME = env.SMARTERP_USERNAME;
 const PASSWORD = env.SMARTERP_PASSWORD;
 
-// CLI args: node gl_ledger_hms.js <from_date> <to_date>
-// Date format: MM/DD/YYYY  e.g. 05/01/2026 05/31/2026
-const [FROM_DATE, TO_DATE] = process.argv.slice(2);
-if (!FROM_DATE || !TO_DATE)
-  throw new Error('Usage: node gl_ledger_hms.js <from_date> <to_date>\nExample: node gl_ledger_hms.js 05/01/2026 05/31/2026');
+// CLI args: node gl_ledger_hms.js <fromMonth> <toMonth> <year>
+// e.g. node gl_ledger_hms.js jan may 2026
+const MONTH_NAMES = ['January','February','March','April','May','June',
+                     'July','August','September','October','November','December'];
 
-// Parse MM/DD/YYYY into { month: "May", year: "2026", day: "1" }
-function parseDate(mmddyyyy) {
-  const months = ['January', 'February', 'March', 'April', 'May', 'June',
-                  'July', 'August', 'September', 'October', 'November', 'December'];
-  const [mm, dd, yyyy] = mmddyyyy.split('/');
-  return { month: months[parseInt(mm) - 1], year: yyyy, day: String(parseInt(dd)) };
+function parseMonthArg(arg) {
+  const lower = arg.toLowerCase();
+  let idx = MONTH_NAMES.findIndex(m => m.toLowerCase().startsWith(lower));
+  if (idx === -1) idx = parseInt(arg) - 1;
+  if (isNaN(idx) || idx < 0 || idx > 11) throw new Error(`Invalid month: "${arg}"`);
+  return idx; // 0-based
 }
 
-const fromParsed = parseDate(FROM_DATE);
-const toParsed   = parseDate(TO_DATE);
+const _args = process.argv.slice(2);
+if (_args.length < 3)
+  throw new Error('Usage: node gl_ledger_hms.js <fromMonth> <toMonth> <year>\nExample: node gl_ledger_hms.js jan may 2026');
+
+const FROM_MONTH_IDX = parseMonthArg(_args[0]);
+const TO_MONTH_IDX   = parseMonthArg(_args[1]);
+const YEAR           = parseInt(_args[2]);
+if (isNaN(YEAR)) throw new Error(`Invalid year: "${_args[2]}"`);
+
+const TO_DAY = new Date(YEAR, TO_MONTH_IDX + 1, 0).getDate(); // last day of TO month
+
+const fromParsed    = { month: MONTH_NAMES[FROM_MONTH_IDX], year: String(YEAR), day: '1' };
+const toParsed      = { month: MONTH_NAMES[TO_MONTH_IDX],   year: String(YEAR), day: String(TO_DAY) };
+const FROM_YYYYMMDD = `${YEAR}-${String(FROM_MONTH_IDX + 1).padStart(2,'0')}-01`;
+const TO_YYYYMMDD   = `${YEAR}-${String(TO_MONTH_IDX + 1).padStart(2,'0')}-${String(TO_DAY).padStart(2,'0')}`;
+
+console.log(`Date range: ${FROM_YYYYMMDD} → ${TO_YYYYMMDD} (to-day: ${TO_DAY})`);
 
 (async () => {
   const browser = await chromium.launch({ headless: false, channel: 'chrome' });
@@ -174,7 +188,11 @@ const toParsed   = parseDate(TO_DATE);
     const row = data[i];
     const accountCode = String(row[acctCodeCol] ?? '');
     const state       = String(row[stateCol] ?? '');
-    const passes = (accountCode.startsWith('4') || accountCode.startsWith('5')) && state === 'posted';
+    const acctDt      = String(row[acctDtCol] ?? '');
+    const passes = (accountCode.startsWith('4') || accountCode.startsWith('5'))
+      && state === 'posted'
+      && acctDt >= FROM_YYYYMMDD
+      && acctDt <= TO_YYYYMMDD;
     ws['!rows'][i] = { ...(ws['!rows'][i] || {}), hidden: !passes };
   }
 
@@ -208,7 +226,11 @@ const toParsed   = parseDate(TO_DATE);
     const row = data[i];
     const accountCode = String(row[acctCodeCol] ?? '');
     const state       = String(row[stateCol] ?? '');
-    if (!((accountCode.startsWith('4') || accountCode.startsWith('5')) && state === 'posted')) continue;
+    const acctDt      = String(row[acctDtCol] ?? '');
+    if (!((accountCode.startsWith('4') || accountCode.startsWith('5'))
+      && state === 'posted'
+      && acctDt >= FROM_YYYYMMDD
+      && acctDt <= TO_YYYYMMDD)) continue;
     const sheetRow = new Array(numCols).fill('');
     for (const [xi, si] of Object.entries(colMap)) sheetRow[si] = row[xi] ?? '';
     rowsToAppend.push(sheetRow);
