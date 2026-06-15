@@ -157,11 +157,14 @@ console.log(`Date range: ${FROM_YYYYMMDD} → ${TO_YYYYMMDD} (to-day: ${TO_DAY})
   const lastRow   = data.length;
   if (!ws['!rows']) ws['!rows'] = [];
 
-  // Find ACCOUNTING DT column index from header row
-  const headerRow  = data[headerRowIdx];
-  const acctDtCol  = headerRow.findIndex(h => String(h ?? '').toUpperCase() === 'ACCOUNTING DT');
+  // Find column indices from header row
+  const headerRow   = data[headerRowIdx];
+  const acctDtCol   = headerRow.findIndex(h => String(h ?? '').toUpperCase() === 'ACCOUNTING DT');
   const acctCodeCol = headerRow.findIndex(h => String(h ?? '').toUpperCase() === 'ACCOUNT CODE');
-  const stateCol   = headerRow.findIndex(h => String(h ?? '').toUpperCase() === 'STATE');
+  const acctNameCol = headerRow.findIndex(h => String(h ?? '').toUpperCase() === 'ACCOUNT NAME');
+  const deptCol     = headerRow.findIndex(h => String(h ?? '').toUpperCase() === 'DEPT');
+  const deptmtCol   = headerRow.findIndex(h => String(h ?? '').toUpperCase() === 'DEPARTMENT');
+  const stateCol    = headerRow.findIndex(h => String(h ?? '').toUpperCase() === 'STATE');
 
   // Convert ACCOUNTING DT column to YYYY-MM-DD
   if (acctDtCol >= 0) {
@@ -182,6 +185,77 @@ console.log(`Date range: ${FROM_YYYYMMDD} → ${TO_YYYYMMDD} (to-day: ${TO_DAY})
         if (data[i]) data[i][acctDtCol] = formatted;
       }
     }
+  }
+
+  // Account code remapping rules — both depts lack IT budget, expenses moved to Software licenses fee
+  const REMAP_RULES = [
+    {
+      depts:     new Set(['204000','204100','204101','204102','204200','204201','204202']),
+      fromCode:  '52030100504', // Network IT expenses
+      toCode:    '52030100506',
+      toName:    'Software licenses fee',
+    },
+    {
+      depts:     new Set(['200020','200021']),
+      fromCode:  '52030101107', // Computer system maintenance Contract
+      toCode:    '52030100506',
+      toName:    'Software licenses fee',
+    },
+  ];
+
+  for (let i = dataStart; i < lastRow; i++) {
+    const row      = data[i];
+    const deptCode = String(row[deptCol] ?? '').trim().split(/\s+/)[0];
+    const code     = String(row[acctCodeCol] ?? '').trim();
+    const rule     = REMAP_RULES.find(r => r.depts.has(deptCode) && r.fromCode === code);
+    if (rule) {
+      data[i][acctCodeCol] = rule.toCode;
+      data[i][acctNameCol] = rule.toName;
+      const codeCell = XLSX.utils.encode_cell({ r: i, c: acctCodeCol });
+      const nameCell = XLSX.utils.encode_cell({ r: i, c: acctNameCol });
+      if (ws[codeCell]) { ws[codeCell].v = rule.toCode; ws[codeCell].w = rule.toCode; ws[codeCell].t = 's'; }
+      if (ws[nameCell]) { ws[nameCell].v = rule.toName; ws[nameCell].w = rule.toName; ws[nameCell].t = 's'; }
+    }
+  }
+
+  // Remap DEPT/DEPARTMENT for specific account codes
+  const DEPT_REMAP_RULES = [
+    {
+      depts:    new Set(['206000']),      // Administration Office
+      fromCode: '52030100601',           // Cleaning services expenses
+      toDept:   '100000',
+      toDeptmt: 'MD Office',
+    },
+  ];
+
+  for (let i = dataStart; i < lastRow; i++) {
+    const row      = data[i];
+    const deptCode = String(row[deptCol] ?? '').trim().split(/\s+/)[0];
+    const code     = String(row[acctCodeCol] ?? '').trim();
+    const rule     = DEPT_REMAP_RULES.find(r => r.depts.has(deptCode) && r.fromCode === code);
+    if (rule) {
+      data[i][deptCol]   = rule.toDept;
+      data[i][deptmtCol] = rule.toDeptmt;
+      const dCell  = XLSX.utils.encode_cell({ r: i, c: deptCol });
+      const dmCell = XLSX.utils.encode_cell({ r: i, c: deptmtCol });
+      if (!ws[dCell])  ws[dCell]  = {};
+      if (!ws[dmCell]) ws[dmCell] = {};
+      ws[dCell].v  = rule.toDept;   ws[dCell].w  = rule.toDept;   ws[dCell].t  = 's';
+      ws[dmCell].v = rule.toDeptmt; ws[dmCell].w = rule.toDeptmt; ws[dmCell].t = 's';
+    }
+  }
+
+  // Fill void DEPT and DEPARTMENT with MD Office (100000)
+  for (let i = dataStart; i < lastRow; i++) {
+    if (String(data[i][deptCol] ?? '').trim()) continue;
+    data[i][deptCol]   = '100000';
+    data[i][deptmtCol] = 'MD Office';
+    const dCell  = XLSX.utils.encode_cell({ r: i, c: deptCol });
+    const dmCell = XLSX.utils.encode_cell({ r: i, c: deptmtCol });
+    if (!ws[dCell])  ws[dCell]  = {};
+    if (!ws[dmCell]) ws[dmCell] = {};
+    ws[dCell].v  = '100000';   ws[dCell].w  = '100000';   ws[dCell].t  = 's';
+    ws[dmCell].v = 'MD Office'; ws[dmCell].w = 'MD Office'; ws[dmCell].t = 's';
   }
 
   for (let i = dataStart; i < lastRow; i++) {
