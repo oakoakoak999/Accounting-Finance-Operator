@@ -136,20 +136,51 @@ const toParsed   = parseDate(TO_DATE);
   const ws = wb.Sheets[wb.SheetNames[0]];
   const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
 
-  // Row 4 (index 3) is the header; data starts at index 4
-  const lastRow = data.length;
+  // Find header row dynamically (look for 'ACCOUNT CODE')
+  const headerRowIdx = data.findIndex(row => row && row.some(cell => String(cell ?? '').toUpperCase() === 'ACCOUNT CODE'));
+  if (headerRowIdx === -1) throw new Error('Header row not found in XLSX');
+  const dataStart = headerRowIdx + 1;
+  const lastRow   = data.length;
   if (!ws['!rows']) ws['!rows'] = [];
 
-  for (let i = 4; i < lastRow; i++) {
+  // Find ACCOUNTING DT column index from header row
+  const headerRow  = data[headerRowIdx];
+  const acctDtCol  = headerRow.findIndex(h => String(h ?? '').toUpperCase() === 'ACCOUNTING DT');
+  const acctCodeCol = headerRow.findIndex(h => String(h ?? '').toUpperCase() === 'ACCOUNT CODE');
+  const stateCol   = headerRow.findIndex(h => String(h ?? '').toUpperCase() === 'STATE');
+
+  // Convert ACCOUNTING DT column to YYYY-MM-DD
+  if (acctDtCol >= 0) {
+    for (let i = dataStart; i < lastRow; i++) {
+      const cellAddr = XLSX.utils.encode_cell({ r: i, c: acctDtCol });
+      const cell = ws[cellAddr];
+      if (!cell || cell.v == null) continue;
+      let formatted = null;
+      if (typeof cell.v === 'number') {
+        const p = XLSX.SSF.parse_date_code(cell.v);
+        if (p) formatted = `${p.y}-${String(p.m).padStart(2,'0')}-${String(p.d).padStart(2,'0')}`;
+      } else if (typeof cell.v === 'string') {
+        const m = cell.v.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        if (m) formatted = `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+      }
+      if (formatted) {
+        cell.v = formatted; cell.t = 's'; cell.w = formatted; delete cell.z;
+        if (data[i]) data[i][acctDtCol] = formatted;
+      }
+    }
+  }
+
+  for (let i = dataStart; i < lastRow; i++) {
     const row = data[i];
-    const accountCode = String(row[3] ?? ''); // Column D (0-based index 3)
-    const state       = String(row[15] ?? ''); // Column P (0-based index 15)
+    const accountCode = String(row[acctCodeCol] ?? '');
+    const state       = String(row[stateCol] ?? '');
     const passes = (accountCode.startsWith('4') || accountCode.startsWith('5')) && state === 'posted';
     ws['!rows'][i] = { ...(ws['!rows'][i] || {}), hidden: !passes };
   }
 
-  // Set AutoFilter range on row 4
-  ws['!autofilter'] = { ref: `A4:P${lastRow}` };
+  // AutoFilter on header row (1-based Excel row)
+  const lastCol = XLSX.utils.encode_col(headerRow.length - 1);
+  ws['!autofilter'] = { ref: `A${headerRowIdx + 1}:${lastCol}${lastRow}` };
 
   XLSX.writeFile(wb, downloadPath);
   console.log('Filters applied via xlsx.');
@@ -163,7 +194,7 @@ const toParsed   = parseDate(TO_DATE);
   });
   const sheetHeaders = (headerRes.data.values?.[0] || []).map(h => String(h).trim());
 
-  const xlsxHeaders = (data[3] || []).map(h => String(h ?? '').trim());
+  const xlsxHeaders = headerRow.map(h => String(h ?? '').trim());
   const colMap = {};
   xlsxHeaders.forEach((name, i) => {
     const si = sheetHeaders.findIndex(sh => sh.toLowerCase() === name.toLowerCase());
@@ -173,10 +204,10 @@ const toParsed   = parseDate(TO_DATE);
 
   const numCols = sheetHeaders.length;
   const rowsToAppend = [];
-  for (let i = 4; i < lastRow; i++) {
+  for (let i = dataStart; i < lastRow; i++) {
     const row = data[i];
-    const accountCode = String(row[3] ?? '');
-    const state       = String(row[15] ?? '');
+    const accountCode = String(row[acctCodeCol] ?? '');
+    const state       = String(row[stateCol] ?? '');
     if (!((accountCode.startsWith('4') || accountCode.startsWith('5')) && state === 'posted')) continue;
     const sheetRow = new Array(numCols).fill('');
     for (const [xi, si] of Object.entries(colMap)) sheetRow[si] = row[xi] ?? '';
