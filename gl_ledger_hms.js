@@ -3,6 +3,7 @@ const XLSX = require('xlsx');
 const { google } = require('googleapis');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 const SHEET_ID  = '157EM10aUaWiD6cWehjD20p1YEzsklNqG_IuF1XDI9YQ';
 const SHEET_TAB = 'GL';
@@ -122,7 +123,7 @@ console.log(`Date range: ${FROM_YYYYMMDD} → ${TO_YYYYMMDD} (to-day: ${TO_DAY})
   await page.waitForTimeout(500);
 
   const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-  const downloadPath = `C:\\Users\\Thanapol.ph\\Downloads\\GL Ledger all Detail (HMS) ${today}.xlsx`;
+  const downloadPath = path.join(os.homedir(), 'Downloads', `GL Ledger all Detail (HMS) ${today}.xlsx`);
 
   // Capture the call_button response to get the dynamic download URL
   const callButtonPromise = page.waitForResponse(r => r.url().includes('call_button'));
