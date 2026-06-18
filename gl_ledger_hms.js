@@ -47,9 +47,11 @@ function parseMonthArg(arg) {
   return idx; // 0-based
 }
 
-const _args = process.argv.slice(2);
+const _rawArgs = process.argv.slice(2);
+const HEADLESS = _rawArgs.some(a => a.toLowerCase() === '--headless');
+const _args = _rawArgs.filter(a => a.toLowerCase() !== '--headless');
 if (_args.length < 3)
-  throw new Error('Usage: node gl_ledger_hms.js <fromMonth> <toMonth> <year>\nExample: node gl_ledger_hms.js jan may 2026');
+  throw new Error('Usage: node gl_ledger_hms.js <fromMonth> <toMonth> <year> [--headless]\nExample: node gl_ledger_hms.js jan may 2026 --headless');
 
 const FROM_MONTH_IDX = parseMonthArg(_args[0]);
 const TO_MONTH_IDX   = parseMonthArg(_args[1]);
@@ -66,7 +68,7 @@ const TO_YYYYMMDD   = `${YEAR}-${String(TO_MONTH_IDX + 1).padStart(2,'0')}-${Str
 console.log(`Date range: ${FROM_YYYYMMDD} → ${TO_YYYYMMDD} (to-day: ${TO_DAY})`);
 
 (async () => {
-  const browser = await chromium.launch({ headless: false, channel: 'chrome' });
+  const browser = await chromium.launch({ headless: HEADLESS, channel: 'chrome' });
   const context = await browser.newContext();
   const page    = await context.newPage();
 
