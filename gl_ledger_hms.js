@@ -34,6 +34,25 @@ const BASE_URL = env.SMARTERP_URL;
 const USERNAME = env.SMARTERP_USERNAME;
 const PASSWORD = env.SMARTERP_PASSWORD;
 
+// The report's numeric menu_id/action and Studio field record IDs change on every ERP update,
+// so everything below is resolved at runtime from these stable names instead of being hardcoded.
+const REPORT_MENU_PATH = 'Accounting/Query/General Ledger/GL Ledger all Detail (HMS)';
+const REPORT_MENU_NAME = 'GL Ledger all Detail (HMS)';
+
+// Call an Odoo model method over the authenticated web session (JSON-RPC).
+async function callKw(page, model, method, args, kwargs = {}) {
+  const res = await page.evaluate(async ({ model, method, args, kwargs }) => {
+    const r = await fetch('/web/dataset/call_kw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'call', params: { model, method, args, kwargs } }),
+    });
+    return r.json();
+  }, { model, method, args, kwargs });
+  if (res.error) throw new Error(`call_kw ${model}.${method}: ${res.error.data?.message || res.error.message}`);
+  return res.result;
+}
+
 // CLI args: node gl_ledger_hms.js <fromMonth> <toMonth> <year>
 // e.g. node gl_ledger_hms.js jan may 2026
 const MONTH_NAMES = ['January','February','March','April','May','June',
@@ -80,9 +99,30 @@ console.log(`Date range: ${FROM_YYYYMMDD} → ${TO_YYYYMMDD} (to-day: ${TO_DAY})
   await page.waitForLoadState('load');
   await page.waitForTimeout(2000);
 
-  // Go directly to Query -> GL Ledger all Detail (HMS)
-  await page.goto(`${BASE_URL}/web#menu_id=1079&action=1430&cids=2`, { waitUntil: 'load', timeout: 60000 });
+  // Resolve the report's current menu_id + action by its stable menu path (IDs churn on ERP updates)
+  const menus = await callKw(page, 'ir.ui.menu', 'search_read',
+    [[['name', '=', REPORT_MENU_NAME]], ['id', 'complete_name', 'action']], { context: { lang: 'en_US' } });
+  const menu = menus.find(m => m.complete_name === REPORT_MENU_PATH) || menus.find(m => m.action);
+  if (!menu || !menu.action)
+    throw new Error(`Could not resolve report menu "${REPORT_MENU_PATH}" (found ${menus.length} candidates)`);
+  const actionId = String(menu.action).split(',').pop(); // "ir.actions.act_window,1618" -> "1618"
+  console.log(`Resolved report: menu_id=${menu.id} action=${actionId}`);
+  await page.goto(`${BASE_URL}/web#menu_id=${menu.id}&action=${actionId}&cids=2`, { waitUntil: 'load', timeout: 60000 });
   await page.waitForTimeout(3000);
+
+  // Resolve the Studio field IDs from the DOM (numeric record IDs change on ERP updates).
+  // Both date fields share the ..._amdate_0 suffix; the lower record id is From, the higher is To.
+  await page.waitForSelector('[id^="x_x_gl_ledger_all_descr_hms_"][id$="_amdate_0"]', { timeout: 30000 });
+  const fieldIds = await page.evaluate(() => {
+    const dates = [...document.querySelectorAll('[id^="x_x_gl_ledger_all_descr_hms_"][id$="_amdate_0"]')]
+      .map(e => e.id)
+      .sort((a, b) => parseInt(a.match(/_(\d+)_amdate_0$/)[1]) - parseInt(b.match(/_(\d+)_amdate_0$/)[1]));
+    const bu = document.querySelector('[id^="x_x_gl_ledger_all_descr_hms_"][id$="_rcid_0"]');
+    return { fromId: dates[0], toId: dates[1], buId: bu ? bu.id : null };
+  });
+  if (!fieldIds.fromId || !fieldIds.toId || !fieldIds.buId)
+    throw new Error(`Could not resolve GL form fields: ${JSON.stringify(fieldIds)}`);
+  console.log(`Resolved fields: from=${fieldIds.fromId} to=${fieldIds.toId} bu=${fieldIds.buId}`);
 
   // Helper: open datepicker for a field and navigate to the target month/day
   async function pickDate(fieldId, targetMonth, targetYear, day) {
@@ -111,13 +151,13 @@ console.log(`Date range: ${FROM_YYYYMMDD} → ${TO_YYYYMMDD} (to-day: ${TO_DAY})
   }
 
   // Set From date
-  await pickDate('x_x_gl_ledger_all_descr_hms_884_amdate_0', fromParsed.month, fromParsed.year, fromParsed.day);
+  await pickDate(fieldIds.fromId, fromParsed.month, fromParsed.year, fromParsed.day);
 
   // Set To date
-  await pickDate('x_x_gl_ledger_all_descr_hms_885_amdate_0', toParsed.month, toParsed.year, toParsed.day);
+  await pickDate(fieldIds.toId, toParsed.month, toParsed.year, toParsed.day);
 
   // Set BU -> HMS
-  const buField = page.locator('#x_x_gl_ledger_all_descr_hms_886_rcid_0');
+  const buField = page.locator(`#${fieldIds.buId}`);
   await buField.click();
   await buField.fill('HMS');
   await page.waitForTimeout(1000);
