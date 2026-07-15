@@ -230,19 +230,31 @@ console.log(`Date range: ${FROM_YYYYMMDD} → ${TO_YYYYMMDD} (to-day: ${TO_DAY})
     }
   }
 
-  // Account code remapping rules — both depts lack IT budget, expenses moved to Software licenses fee
+  // Account code remapping rules. First matching rule wins; dept sets must stay
+  // disjoint — rules 1 and 3 are inverses of each other, so a dept listed in both
+  // would remap differently depending on rule order.
   const REMAP_RULES = [
     {
+      // These depts lack IT budget — expenses moved to Software licenses fee.
       depts:     new Set(['204000','204100','204101','204102','204200','204201','204202']),
       fromCode:  '52030100504', // Network IT expenses
       toCode:    '52030100506',
       toName:    'Software licenses fee',
     },
     {
+      // These depts lack IT budget — expenses moved to Software licenses fee.
       depts:     new Set(['200020','200021']),
       fromCode:  '52030101107', // Computer system maintenance Contract
       toCode:    '52030100506',
       toName:    'Software licenses fee',
+    },
+    {
+      // IT Security never carries license spend — a Software licenses fee entry
+      // here is a miscode and belongs under Network IT expenses.
+      depts:     new Set(['203304']), // IT Security
+      fromCode:  '52030100506', // Software licenses fee
+      toCode:    '52030100504',
+      toName:    'Network IT expenses',
     },
   ];
 
