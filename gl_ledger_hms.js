@@ -41,33 +41,14 @@ const REPORT_MENU_NAME = 'GL Ledger all Detail (HMS)';
 
 // Call an Odoo model method over the authenticated web session (JSON-RPC).
 async function callKw(page, model, method, args, kwargs = {}) {
-  // An in-flight SmartERP redirect can tear down the page's JS execution context
-  // mid-evaluate. That is transient, so retry it; real call_kw errors are not
-  // retried (the res.error check deliberately sits outside the loop).
-  const isTransient = (msg = '') =>
-    /Execution context was destroyed|Target closed|Cannot find context|navigating/i.test(msg);
-
-  let res, lastErr;
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    try {
-      res = await page.evaluate(async ({ model, method, args, kwargs }) => {
-        const r = await fetch('/web/dataset/call_kw', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jsonrpc: '2.0', method: 'call', params: { model, method, args, kwargs } }),
-        });
-        return r.json();
-      }, { model, method, args, kwargs });
-      lastErr = null;
-      break;
-    } catch (e) {
-      if (!isTransient(e.message)) throw e;
-      lastErr = e;
-      console.log(`  call_kw ${model}.${method}: context destroyed mid-navigation, retry ${attempt}/5`);
-      await page.waitForTimeout(2000);
-    }
-  }
-  if (lastErr) throw lastErr;
+  const res = await page.evaluate(async ({ model, method, args, kwargs }) => {
+    const r = await fetch('/web/dataset/call_kw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'call', params: { model, method, args, kwargs } }),
+    });
+    return r.json();
+  }, { model, method, args, kwargs });
   if (res.error) throw new Error(`call_kw ${model}.${method}: ${res.error.data?.message || res.error.message}`);
   return res.result;
 }
@@ -116,9 +97,6 @@ console.log(`Date range: ${FROM_YYYYMMDD} → ${TO_YYYYMMDD} (to-day: ${TO_DAY})
   await page.fill('#password', PASSWORD);
   await page.click('button[type=submit]');
   await page.waitForLoadState('load');
-  // Wait for the web client itself, not a fixed sleep: the post-login redirect used to
-  // still be navigating when the first call_kw ran, destroying the execution context.
-  await page.waitForSelector('.o_web_client, .o_main_navbar', { timeout: 60000 }).catch(() => {});
   await page.waitForTimeout(2000);
 
   // Resolve the report's current menu_id + action by its stable menu path (IDs churn on ERP updates)
